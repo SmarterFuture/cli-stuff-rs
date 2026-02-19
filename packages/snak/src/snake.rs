@@ -1,6 +1,9 @@
 use rand::Rng;
+use renderer::{
+    traits::{RenderTarget, Renderble},
+    types::Size,
+};
 
-use crate::backend::{RenderTarget, Renderble, Size};
 use std::collections::LinkedList;
 
 #[derive(Debug)]

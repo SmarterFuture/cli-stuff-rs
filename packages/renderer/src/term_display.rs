@@ -4,25 +4,12 @@ use std::{
 };
 
 use crate::{
-    backend::{Quad, RenderTarget, Renderble, Size},
-    snake::{Status, Tile},
+    traits::RenderTarget, types::{Quad, Size},
 };
-
-impl Renderble for Tile {
-    type Primitive = char;
-    fn render(&self) -> impl Iterator<Item = Self::Primitive> {
-        iter::once(match self {
-            Tile::Corpse => 'x',
-            Tile::Empty => ' ',
-            Tile::Food => '+',
-            Tile::Snake => 'o',
-        })
-    }
-}
 
 pub struct TermScreen {
     full_size: Size,
-    constent_size: Size,
+    content_size: Size,
 }
 
 impl TermScreen {
@@ -32,7 +19,7 @@ impl TermScreen {
     pub fn new(w: usize, h: usize) -> Self {
         Self {
             full_size: Size::new((w + 1) * 2, h + 3),
-            constent_size: Size::new(w, h),
+            content_size: Size::new(w, h),
         }
     }
 
@@ -42,8 +29,12 @@ impl TermScreen {
         s.h += 3;
         Self {
             full_size: s,
-            constent_size: cs,
+            content_size: cs,
         }
+    }
+
+    pub fn get_size(&self) -> &Size {
+        &self.content_size
     }
 
     pub fn render_text(
@@ -82,7 +73,7 @@ impl RenderTarget<char> for TermScreen {
         let side = format!("\n\r#\x1B[{}C#", self.full_size.w - 2 * Self::BORDER_WIDTH);
 
         print!("\n\r{}", line);
-        print!("{}", side.repeat(self.constent_size.h));
+        print!("{}", side.repeat(self.content_size.h));
         print!("\n\r{}", line);
         io::stdout().flush()
     }
@@ -99,7 +90,7 @@ impl RenderTarget<char> for TermScreen {
     {
         println!("\x1B[H");
         for (i, v) in items.enumerate() {
-            if i % self.constent_size.w == 0 {
+            if i % self.content_size.w == 0 {
                 print!("\n\r\x1B[{}C", Self::BORDER_WIDTH);
             }
             print!("{} ", v);
@@ -111,16 +102,6 @@ impl RenderTarget<char> for TermScreen {
 impl Drop for TermScreen {
     fn drop(&mut self) {
         self.exit().unwrap();
-    }
-}
-
-impl Renderble for Status {
-    type Primitive = char;
-    fn render(&self) -> impl Iterator<Item = Self::Primitive> {
-        let owned = format!("Status: {:>4} Difficulty: {:>4}", self.score, self.diff)
-            .chars()
-            .collect::<Vec<_>>();
-        owned.into_iter()
     }
 }
 

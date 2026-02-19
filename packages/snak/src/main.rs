@@ -8,15 +8,14 @@ use std::{
 
 use rand::thread_rng;
 use raw_tty::IntoRawMode;
-
-use crate::{
-    backend::{Quad, RenderTarget, Size},
+use renderer::{
     term_display::{TermScreen, TermStatusLine},
+    traits::RenderTarget,
+    types::{Quad, Size},
 };
 
-mod backend;
+mod render;
 mod snake;
-mod term_display;
 
 fn play_snake(w: usize, h: usize) -> Result<(), io::Error> {
     let (lock_tx, lock_rx) = mpsc::channel::<bool>();

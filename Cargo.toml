@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "./packages/snak",
-    "./packages/bad_apple/",
+    "./packages/bad_apple/", "packages/renderer",
 ]
 
 resolver = "2"

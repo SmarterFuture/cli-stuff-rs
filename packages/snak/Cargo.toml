@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 rand = "0.8.5"
 raw_tty = "0.1.0"
+renderer = { path = "../renderer/" }
