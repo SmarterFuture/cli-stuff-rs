@@ -118,10 +118,11 @@ fn main() {
                 }
             }
             "-q" | "--quality" => match val.as_str() {
+                "extra" | "e" => res = Res::Extra,
                 "high" | "h" => res = Res::High,
                 "low" | "l" => res = Res::Low,
                 _ => {
-                    eprintln!("Invalid quality, not in {{h, l, high, low}}");
+                    eprintln!("Invalid quality, not in {{e, h, l, extra, high, low}}");
                     return;
                 }
             },

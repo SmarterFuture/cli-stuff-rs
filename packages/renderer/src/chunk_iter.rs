@@ -3,6 +3,7 @@ use std::mem;
 pub trait Collector<T> {
     fn new(w: usize) -> Self;
     fn push(&mut self, v: T);
+    fn empty(&mut self);
 }
 
 pub struct ChunkIter<I, U>
@@ -59,7 +60,10 @@ where
                 self.buf[chunk_x].push(value);
             } else if self.cx == 0 && self.rel_y == 0 {
                 return None;
+            } else {
+                self.buf[chunk_x].empty();
             }
+
             let row_done = self.rel_y + 1 == self.chunk_h;
             let col_done = self.rel_x + 1 == self.chunk_w || self.cx + 1 == self.w;
 
@@ -100,6 +104,7 @@ mod tests {
         fn push(&mut self, v: T) {
             self.push(v);
         }
+        fn empty(&mut self) {}
     }
 
     impl Collector<i32> for i32 {
@@ -109,6 +114,7 @@ mod tests {
         fn push(&mut self, v: i32) {
             *self += v;
         }
+        fn empty(&mut self) {}
     }
 
     #[test]

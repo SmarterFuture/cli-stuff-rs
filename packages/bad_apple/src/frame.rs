@@ -21,6 +21,7 @@ impl Collector<bool> for Threshold {
     fn push(&mut self, v: bool) {
         self.0 += v as u16
     }
+    fn empty(&mut self) {}
 }
 
 pub struct FramesIter<I>
