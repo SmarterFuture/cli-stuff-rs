@@ -1,16 +1,20 @@
 use bitvec::{order::Msb0, view::BitView};
 use raw_tty::IntoRawMode;
+use renderer::{
+    hr_bw_display::{HighResBWScreen, Res},
+    term_display::TermStatusLine,
+    traits::RenderTarget,
+};
 use std::{
     env,
-    io::{self, Read, Write},
+    io::{self, Read},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use crate::frame::ToFrames;
+use crate::frame::{Frame, ToFrames};
 
-mod chunk_iter;
 mod frame;
 
 const WIDTH: usize = 480;
@@ -19,13 +23,16 @@ const APPLE: &[u8] = include_bytes!("../assets/apple480.raw");
 // const APPLE: &[u8] = include_bytes!("../assets/apple_short.raw");
 const FPS: u64 = 30;
 
-fn play_apple(scale: usize, fps: u64) -> io::Result<()> {
-    print!("\x1B[?1049h");
-    print!("\x1B[?25l");
-    print!("\x1B[2J\x1B[H");
-    io::stdout().flush()?;
+fn play_apple(scale: usize, fps: u64, res: Res) -> io::Result<()> {
+    let w = WIDTH.div_ceil(scale);
 
-    let (frames_tx, frames_rx) = mpsc::channel::<String>();
+    let mut screen = HighResBWScreen::new(w, res);
+    let mut statusline = TermStatusLine::new(w);
+
+    screen.init()?;
+    statusline.init()?;
+
+    let (frames_tx, frames_rx) = mpsc::channel::<Frame>();
     let (stop_tx, stop_rx) = mpsc::channel::<bool>();
 
     let input = thread::spawn(move || {
@@ -43,12 +50,12 @@ fn play_apple(scale: usize, fps: u64) -> io::Result<()> {
     });
 
     thread::spawn(move || {
-        APPLE
+        let _ = APPLE
             .view_bits::<Msb0>()
             .iter()
             .map(|b| *b)
             .to_frames(WIDTH, HEIGHT, scale)
-            .for_each(|frame| frames_tx.send(frame).unwrap());
+            .try_for_each(|frame| frames_tx.send(frame));
     });
 
     let mut frame_st = Instant::now();
@@ -57,18 +64,15 @@ fn play_apple(scale: usize, fps: u64) -> io::Result<()> {
     let sleep = Duration::from_micros(1_000_000 / fps);
 
     while let Ok(frame) = frames_rx.recv() {
-        print!("\x1B[H");
-        print!("{}", frame);
-        print!("Press q to exit!");
-        io::stdout().flush()?;
+        frame.draw_frame_to(&mut screen)?;
+        // statusline.draw("Press q to exit!".chars())?;
 
         if stop_rx.try_recv().is_ok() {
             break;
         }
 
         let delta = frame_st.elapsed();
-        print!(" dt: {}us        ", delta.as_micros());
-        io::stdout().flush()?;
+        statusline.draw(format!("dt: {}us     ", delta.as_micros()).chars())?;
 
         thread::sleep(sleep.saturating_sub(delta));
         frame_st = Instant::now();
@@ -78,9 +82,8 @@ fn play_apple(scale: usize, fps: u64) -> io::Result<()> {
 
     input.join().unwrap();
 
-    print!("\x1B[?1049l");
-    print!("\x1b[?25h");
-    io::stdout().flush()?;
+    screen.exit()?;
+    statusline.exit()?;
 
     println!("Total: {:.2}", total.as_secs_f64());
 
@@ -91,31 +94,40 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let mut scale: usize = 1;
     let mut fps: u64 = FPS;
+    let mut res: Res = Res::High;
 
-    let mut iter = args.iter();
+    let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
+        let Some(val) = iter.next() else {
+            continue;
+        };
+
         match arg.as_str() {
             "-s" | "--scale" => {
-                if let Some(val) = iter.next() {
-                    scale = val.parse().unwrap();
-                    if !(0..=100).contains(&scale) {
-                        eprintln!("Scale is not in range [0, 100]!");
-                        return;
-                    }
+                scale = val.parse().unwrap();
+                if !(0..=100).contains(&scale) {
+                    eprintln!("Scale is not in range [0, 100]!");
+                    return;
                 }
             }
             "-r" | "--rate" => {
-                if let Some(val) = iter.next() {
-                    fps = val.parse().unwrap();
-                    if !(10..=120).contains(&fps) {
-                        eprintln!("Framerate is not in range [10, 120]!");
-                        return;
-                    }
+                fps = val.parse().unwrap();
+                if !(10..=120).contains(&fps) {
+                    eprintln!("Framerate is not in range [10, 120]!");
+                    return;
                 }
             }
+            "-q" | "--quality" => match val.as_str() {
+                "high" | "h" => res = Res::High,
+                "low" | "l" => res = Res::Low,
+                _ => {
+                    eprintln!("Invalid quality, not in {{h, l, high, low}}");
+                    return;
+                }
+            },
             _ => {}
         }
     }
 
-    play_apple(scale, fps).unwrap();
+    play_apple(scale, fps, res).unwrap();
 }

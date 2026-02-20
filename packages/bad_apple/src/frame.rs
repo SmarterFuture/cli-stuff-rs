@@ -1,76 +1,25 @@
-use std::fmt::Display;
+use std::ops::Deref;
 
-use crate::chunk_iter::{TmpCollector, ToChunks};
+use renderer::{
+    chunk_iter::{Collector, ToChunks},
+    traits::RenderTarget,
+};
 
-pub enum Pixel {
-    Empty,
-    Top,
-    Bottom,
-    Full,
-}
+struct Threshold(u16);
 
-impl Pixel {
-    pub fn new(top: bool, bot: bool) -> Self {
-        match (top, bot) {
-            (false, false) => Self::Empty,
-            (true, false) => Self::Top,
-            (false, true) => Self::Bottom,
-            (true, true) => Self::Full,
-        }
+impl Deref for Threshold {
+    type Target = u16;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl Display for Pixel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Empty => " ",
-                Self::Top => "▀",
-                Self::Bottom => "▄",
-                Self::Full => "█",
-            }
-        )
-    }
-}
-
-struct PixelCol {
-    top: bool,
-    botom: bool,
-    is_top: bool,
-}
-
-impl PixelCol {
-    fn to_pixel(&self) -> Pixel {
-        Pixel::new(self.top, self.botom)
-    }
-}
-
-impl TmpCollector<bool> for PixelCol {
+impl Collector<bool> for Threshold {
     fn new(_w: usize) -> Self {
-        PixelCol {
-            top: false,
-            botom: false,
-            is_top: true,
-        }
-    }
-
-    fn push(&mut self, v: bool) {
-        match self.is_top {
-            true => self.top = v,
-            false => self.botom = v,
-        }
-        self.is_top = !self.is_top;
-    }
-}
-
-impl TmpCollector<bool> for u16 {
-    fn new(_w: usize) -> Self {
-        0
+        Self(0)
     }
     fn push(&mut self, v: bool) {
-        *self += v as u16
+        self.0 += v as u16
     }
 }
 
@@ -82,6 +31,7 @@ where
     h: usize,
     iter: I,
     scale: usize,
+    threshold: u16,
 }
 
 pub trait ToFrames: Iterator<Item = bool> + Sized {
@@ -91,6 +41,7 @@ pub trait ToFrames: Iterator<Item = bool> + Sized {
             h,
             iter: self,
             scale,
+            threshold: (scale.pow(2) / 2) as u16,
         }
     }
 }
@@ -101,35 +52,31 @@ impl<I> Iterator for FramesIter<I>
 where
     I: Iterator<Item = bool>,
 {
-    type Item = String;
+    type Item = Frame;
 
     fn next(&mut self) -> Option<Self::Item> {
         let r_frame = self.iter.by_ref().take(self.w * self.h);
 
-        let frame_w = self.w.div_ceil(self.scale);
-        let threshold = (self.scale.pow(2) / 2) as u16;
+        let pixels: Vec<bool> = r_frame
+            .to_chunks::<Threshold>(self.w, self.scale, self.scale)
+            .map(|x| *x > self.threshold)
+            .collect();
 
-        let pixels = r_frame
-            .to_chunks::<u16>(self.w, self.scale, self.scale)
-            .map(|x| x > threshold)
-            .to_chunks::<PixelCol>(frame_w, 1, 2)
-            .map(|x| x.to_pixel());
-
-        let mut idx = 0;
-        let mut out = String::new();
-
-        for pixel in pixels {
-            out.push_str(&format!("{}", pixel));
-            idx += 1;
-            if idx % frame_w == 0 {
-                out.push_str("\n\r");
-            }
-        }
-
-        if idx == 0 {
+        if pixels.is_empty() {
             return None;
         }
 
-        Some(out)
+        Some(Frame(pixels))
+    }
+}
+
+pub struct Frame(Vec<bool>);
+
+impl Frame {
+    pub fn draw_frame_to<R>(self, target: &mut R) -> Result<(), R::Error>
+    where
+        R: RenderTarget<bool>,
+    {
+        target.draw(self.0.into_iter())
     }
 }

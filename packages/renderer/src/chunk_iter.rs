@@ -59,8 +59,7 @@ where
                 self.buf[chunk_x].push(value);
             } else if self.cx == 0 && self.rel_y == 0 {
                 return None;
-
-            } 
+            }
             let row_done = self.rel_y + 1 == self.chunk_h;
             let col_done = self.rel_x + 1 == self.chunk_w || self.cx + 1 == self.w;
 
@@ -74,11 +73,11 @@ where
                 self.cx = 0;
                 self.rel_x = 0;
                 self.rel_y += 1;
-                
+
                 if self.rel_y == self.chunk_h {
                     self.rel_y = 0
                 }
-            } 
+            }
 
             if row_done && col_done {
                 let mut tmp = U::new(self.chunk_w * self.chunk_h);
@@ -88,7 +87,6 @@ where
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

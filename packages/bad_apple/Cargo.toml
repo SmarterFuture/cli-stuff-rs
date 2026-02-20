@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 bitvec = "1.0.1"
 raw_tty = "0.1.0"
+renderer = { path = "../renderer/"}

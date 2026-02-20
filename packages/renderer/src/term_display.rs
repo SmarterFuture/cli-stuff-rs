@@ -4,7 +4,8 @@ use std::{
 };
 
 use crate::{
-    traits::RenderTarget, types::{Quad, Size},
+    traits::RenderTarget,
+    types::{Quad, Size},
 };
 
 pub struct TermScreen {
