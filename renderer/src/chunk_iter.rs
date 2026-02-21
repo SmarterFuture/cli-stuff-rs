@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_chunk_iter_incomplete() {
-        let iter: ChunkIter<_, Vec<_>> = (0..7).to_chunks(3, 2, 2);
+        let iter: ChunkIter<_, Vec<_>> = (0..9).to_chunks(3, 2, 2);
 
         let chunks: Vec<_> = iter.collect();
 
