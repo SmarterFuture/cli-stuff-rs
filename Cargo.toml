@@ -3,6 +3,7 @@ members = [
     "./snak",
     "./bad_apple",
     "./renderer",
+    "./stegno",
 ]
 
 resolver = "2"

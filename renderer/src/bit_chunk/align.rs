@@ -1,6 +1,6 @@
 use std::ptr::copy_nonoverlapping;
 
-#[inline(always)]
+#[inline]
 fn read_word(data: &[u8], idx: usize, offset: u8) -> u64 {
     let ptr = unsafe { data.as_ptr().add(idx) };
     let mut block: u128 = 0;
@@ -51,10 +51,6 @@ pub fn align<const W: usize>(data: &[u8]) -> Vec<u64> {
     }
     out
 }
-
-// pub struct BitChunkIter {
-//     w
-// }
 
 #[cfg(test)]
 mod tests {
