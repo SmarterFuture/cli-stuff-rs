@@ -3,20 +3,13 @@ use std::{
     slice::{from_raw_parts, from_raw_parts_mut},
 };
 
-/// broadcasts lower 32 bits of u64 which holds 8 nibbles to full u64, so each nibble now occupies
-/// top bits of byte
-#[inline]
-fn broadcast_c(a: u64) -> u64 {
-    let y = (a | (a << 16)) & 0x0000_FFFF_0000_FFFF;
-    let z = (y | (y << 8)) & 0x00FF_00FF_00FF_00FF;
-    (z & 0x00C0_00C0_00C0_00C0) | ((z << 12) & 0xC000_C000_C000_C000)
-}
+use crate::bit_chunk::pack::unchecked;
 
 /// compress for lanes of size 8, 16, 32 (byte, word, long)
 #[inline]
 fn compress_bwl<const N: usize>(a: u64) -> u64 {
-    assert!(N.is_power_of_two());
-    assert!(N >= 8 && N <= 32);
+    const { assert!(N.is_power_of_two()) }
+    const { assert!(N >= 8 && N <= 32) }
 
     match N {
         8 => {
@@ -31,107 +24,15 @@ fn compress_bwl<const N: usize>(a: u64) -> u64 {
     }
 }
 
-/// pack operation dispatching to crumb/nibble/byte/word/long/quad impls by lane size N
-/// braids `src` 2 columns at a time down all rows, writing packed output into `dst` and
-/// returning it as `&[u8]` aliasing the same storage (no copy, length = bytes actually written)
-#[inline]
-pub fn pack<'a, const N: usize>(w: usize, src: &mut [u64], dst: &'a mut [u64]) -> &'a [u8] {
-    const { assert!(N.is_power_of_two() && N >= 2 && N <= 64) }
-
-    match N {
-        2 => pack_c(w, src, dst),
-        4 => pack_n(w, src, dst),
-        8 => pack_bwl::<8>(w, src, dst),
-        16 => pack_bwl::<16>(w, src, dst),
-        32 => pack_bwl::<32>(w, src, dst),
-        64 => pack_q(w, src, dst),
-        _ => unsafe { unreachable_unchecked() },
-    }
-}
-
-/// pack operation for lanes of size 2 (crumb)
-fn pack_c<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
-    let total = src.len();
-
-    assert!(w > 0 && total.is_multiple_of(w));
-
-    let bands = (total / w).div_ceil(4);
-    assert!(dst.len() >= bands * w * 2);
-
-    let mut base = 0;
-    let mut phase: u8 = 0;
-
-    for y in (0..total).step_by(w) {
-        for x in 0..w {
-            let raw = src[y + x].to_be();
-            let val = (raw | (raw << 1)) & 0xCCCC_CCCC_CCCC_CCCC;
-
-            let lval = broadcast_c(val >> 32);
-            let rval = broadcast_c(val & 0xFFFFFFFF);
-
-            let off = x << 1;
-
-            if phase == 0 {
-                dst[base + off] = lval;
-                dst[base + off + 1] = rval;
-                continue;
-            }
-
-            dst[base + off] |= lval >> phase;
-            dst[base + off + 1] |= rval >> phase;
-        }
-
-        phase += 2;
-        if phase == 8 {
-            phase = 0;
-            base += 2 * w;
-        }
-    }
-
-    let len = bands * w * 16;
-    unsafe { from_raw_parts(dst.as_ptr() as *const u8, len) }
-}
-
-/// pack operation for lanes of size 4 (nibble)
-fn pack_n<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
-    let total = src.len();
-
-    assert!(w > 0 && total.is_multiple_of(w));
-
-    let bands = (total / w).div_ceil(4);
-    assert!(dst.len() >= bands * w);
-
-    let mut base = 0;
-    let mut phase: u8 = 0;
-
-    for y in (0..total).step_by(w) {
-        for x in 0..w {
-            let val = src[y + x].to_be();
-            let row = (val | val << 3) & 0xC0C0_C0C0_C0C0_C0C0;
-
-            if phase == 0 {
-                dst[base + x] = row;
-                continue;
-            }
-
-            dst[base + x] |= row >> phase;
-        }
-
-        phase += 2;
-        if phase == 8 {
-            phase = 0;
-            base += w;
-        }
-    }
-
-    let len = (bands * w) * 8;
-    unsafe { from_raw_parts(dst.as_ptr() as *const u8, len) }
-}
-
 /// pack operation for lanes of size 8, 16, 32 (byte, word, long)
-fn pack_bwl<'a, const N: usize>(w: usize, src: &mut [u64], dst: &'a mut [u64]) -> &'a [u8] {
-    assert!(N.is_power_of_two());
-    assert!(N >= 8 && N <= 32);
+pub(super) fn pack_bwl<'a, const N: usize>(
+    w: usize,
+    src: &mut [u64],
+    dst: &'a mut [u64],
+) -> &'a [u8] {
+    const { assert!(N.is_power_of_two()) }
+    const { assert!(N >= 8 && N <= 32) }
+    assert!(w <= usize::MAX / 64);
 
     let step: u8 = (128 / N as u8) << 1;
     let total = src.len();
@@ -185,7 +86,9 @@ fn pack_bwl<'a, const N: usize>(w: usize, src: &mut [u64], dst: &'a mut [u64]) -
 }
 
 /// pack operation for lanes of size 64 (quad)
-fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
+pub(super) fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
+    assert!(w <= usize::MAX / 64);
+
     let total = src.len();
 
     assert!(w > 0 && total.is_multiple_of(w));
@@ -202,15 +105,15 @@ fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
     for y in (0..total).step_by(w) {
         for x in 0..w {
             let col = x & 1;
-            let pixel = (src[y + x] >> 56) as u8;
+            let pixel = (unchecked!(src[y + x]) >> 56) as u8;
             let offset = base + (x >> 1);
 
             if phase == 0 && col == 0 {
-                out[offset] = pixel;
+                unchecked!(out[offset] = pixel);
                 continue;
             }
 
-            out[offset] |= pixel >> (phase + col);
+            unchecked!(out[offset] |= pixel >> (phase + col));
         }
 
         phase += 2;

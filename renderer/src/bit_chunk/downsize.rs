@@ -1,7 +1,7 @@
 use std::{hint::unreachable_unchecked, mem::transmute};
 
 #[inline]
-pub const fn cmp_ge<const N: usize>(x: u64) -> u64 {
+const fn cmp_ge<const N: usize>(x: u64) -> u64 {
     const { assert!(N.is_power_of_two() && N <= 64) }
 
     let lane_max = u64::MAX >> (64 - N);
@@ -75,26 +75,40 @@ fn combine<const N: usize>(acc: &mut u64, val: u64) {
     };
 }
 
+/// returns (data, junk)
+/// length of data is always divisible by 4w
 pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
-    const { assert!(N.is_power_of_two() && N > 0) }
+    const { assert!(N.is_power_of_two() && N > 1) }
     assert!(w > 0 && src.len().is_multiple_of(w));
 
     let mut base = 0;
-    let mut phase = 0;
+    // we start at 1 bc the first line is in-place mapped
+    let mut phase = 1;
 
-    for y in (0..(src.len())).step_by(w) {
-        for x in 0..w {
-            let word = src[y + x];
-            let out = &mut src[base + x];
+    // only in-place mapping
+    for o in &mut src[..w] {
+        *o = lane_popcount::<N>(*o);
+    }
 
-            if phase == 0 {
-                *out = lane_popcount::<N>(word);
-            } else {
-                combine::<N>(out, word);
+    // well behaved full rows
+    for y in (w..src.len()).step_by(w) {
+        let (head, tail) = src.split_at_mut(y);
+        let out = &mut head[base..base + w]; // base < y always here
+        let row = &tail[..w];
+
+        if phase == 0 {
+            for x in 0..w {
+                out[x] = lane_popcount::<N>(row[x]);
             }
-
-            if phase == N - 1 {
-                *out = cmp_ge::<N>(*out);
+        } else if phase == N - 1 {
+            for x in 0..w {
+                let mut a = out[x];
+                combine::<N>(&mut a, row[x]);
+                out[x] = cmp_ge::<N>(a);
+            }
+        } else {
+            for x in 0..w {
+                combine::<N>(&mut out[x], row[x]);
             }
         }
 
@@ -106,14 +120,13 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
     }
 
     if phase != 0 {
-        for x in 0..w {
-            let out = &mut src[base + x];
-            *out = cmp_ge::<N>(*out);
+        for o in &mut src[base..base + w] {
+            *o = cmp_ge::<N>(*o);
         }
         base += w;
     }
 
-    unsafe { src.split_at_mut_unchecked(base) }
+    src.split_at_mut(base)
 }
 
 #[cfg(test)]
