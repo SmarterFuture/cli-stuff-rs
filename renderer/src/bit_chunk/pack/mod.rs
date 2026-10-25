@@ -1,14 +1,11 @@
 use std::hint::unreachable_unchecked;
 
-use crate::bit_chunk::pack::{
-    crumb::pack_c,
-    nibble::pack_n,
-    pack_t::{pack_bwl, pack_q},
-};
+use crate::bit_chunk::pack::{crumb::pack_c, nibble::pack_n, pack_t::pack_bwl, quad::pack_q};
 
 mod crumb;
 mod nibble;
 mod pack_t;
+mod quad;
 
 macro_rules! unchecked {
     ($src:ident[$idx:expr] $op:tt $rest:expr) => {

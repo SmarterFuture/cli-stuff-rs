@@ -126,7 +126,9 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
         base += w;
     }
 
-    src.split_at_mut(base)
+    let padded = base.next_multiple_of(w * 4);
+    src[base..padded].fill(0);
+    src.split_at_mut(padded)
 }
 
 #[cfg(test)]
@@ -157,31 +159,33 @@ mod tests {
 
     #[test]
     fn n2_single_group() {
-        // lane0: 0b11 + 0b00 = 2 -> on; lane1: 0b01 + 0b00 = 1 -> off
-        let mut s = [0b0111, 0b0000];
-        downsize::<2>(1, &mut s);
-        assert_eq!(s[..1], [0b0010]);
+        // 2 rows, w=1, N=2 -> 1 output row, padded to 4
+        let mut s = [0b0111, 0b0000, 0, 0];
+        let out = downsize::<2>(1, &mut s).0;
+        // lane0: popcount(0b11) + popcount(0b00) = 2 -> on
+        // lane1: popcount(0b01) + popcount(0b00) = 1 -> off
+        assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
     #[test]
     fn n2_exact_threshold_split_across_rows() {
         // 1 + 1 = 2 -> on
-        let mut s = [0b01, 0b01];
-        downsize::<2>(1, &mut s);
-        assert_eq!(s[..1], [0b10]);
+        let mut s = [0b01, 0b01, 0, 0];
+        let out = downsize::<2>(1, &mut s).0;
+        assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
     #[test]
     fn n2_saturation_still_on() {
         // 2 + 2 = 4 saturates to 3, still >= 2
-        let mut s = [0b11, 0b11];
-        downsize::<2>(1, &mut s);
-        assert_eq!(s[..1], [0b10]);
+        let mut s = [0b11, 0b11, 0, 0];
+        let out = downsize::<2>(1, &mut s).0;
+        assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
     #[test]
     fn n2_two_groups_width_two_compacts() {
-        // rows: A0 A1 / B0 B1 / C0 C1 / D0 D1
+        // 4 rows, w=2, N=2 -> 2 output rows, padded to 8
         let mut s = [
             0b11, 0b01, // A
             0b00, 0b01, // B
@@ -190,7 +194,7 @@ mod tests {
         ];
         let out = downsize::<2>(2, &mut s).0;
         // group0: x0 = 2+0 on, x1 = 1+1 on; group1: x0 = 1+0 off, x1 = 2+2 on
-        assert_eq!(out, [0b10, 0b10, 0, 0b10]);
+        assert_eq!(out, [0b10, 0b10, 0, 0b10, 0, 0, 0, 0]);
     }
 
     // ---- N = 4 (thr = 8; an "on" lane is 0x8) ----
@@ -271,49 +275,56 @@ mod tests {
 
     #[test]
     fn ragged_n2_partial_on() {
-        // group0 on; partial row has 2 bits in lane0 -> 2 >= 2 -> on
-        let mut s = [0b11, 0b00, 0b11];
+        // 3 rows, w=1, N=2 -> 1 full group + 1 partial, padded to 4
+        let mut s = [0b11, 0b00, 0b11, 0];
         let out = downsize::<2>(1, &mut s).0;
-        assert_eq!(out, [0b10, 0b10]);
+        assert_eq!(out, [0b10, 0b10, 0, 0]);
     }
 
     #[test]
     fn ragged_n2_partial_off() {
-        let mut s = [0b11, 0b11, 0b01]; // partial count 1 < 2
+        // partial count 1 < 2 -> off
+        let mut s = [0b11, 0b11, 0b01, 0];
         let out = downsize::<2>(1, &mut s).0;
-        assert_eq!(out, [0b10, 0]);
+        assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
     #[test]
     fn ragged_n2_width_two() {
+        // 3 rows, w=2, N=2 -> 1 full group + 1 partial, padded to 8
         let mut s = [
-            0b11, 0b00, 0b00, 0b00, 0b11, 0b01, // partial: x0 = 2 on, x1 = 1 off
+            0b11, 0b00, 0b00, 0b00, 0b11, 0b01, // rows 0-2
+            0, 0, // padding
         ];
         let out = downsize::<2>(2, &mut s).0;
-        assert_eq!(out, [0b10, 0, 0b10, 0]);
+        // partial: x0 = 2 on, x1 = 1 off
+        assert_eq!(out, [0b10, 0, 0b10, 0, 0, 0, 0, 0]);
     }
 
     #[test]
     fn ragged_n8_one_extra_row_off() {
-        let mut s = [0xFF; 9]; // group0 = 64 on; partial = 8 < 32 off
+        // 9 rows, w=1, N=8 -> 1 full group + 1 partial (count 8 < 32 off), padded to 4
+        let mut s = [0xFF; 9];
         let out = downsize::<8>(1, &mut s).0;
-        assert_eq!(out, [0x80, 0]);
+        assert_eq!(out, [0x80, 0, 0, 0]);
     }
 
     #[test]
     fn ragged_n8_four_extra_rows_on() {
+        // 12 rows, w=1, N=8 -> group0 zero, partial = 4*8 = 32 -> on, padded to 4
         let mut s = [0u64; 12];
-        s[8..].fill(0xFF); // partial = 4 * 8 = 32 -> on
+        s[8..].fill(0xFF);
         let out = downsize::<8>(1, &mut s).0;
-        assert_eq!(out, [0, 0x80]);
+        assert_eq!(out, [0, 0x80, 0, 0]);
     }
 
     // ---- Returned slice length ----
 
     #[test]
-    fn returned_len_is_ceil_rows_over_n_times_w() {
-        let mut s = [0u64; 10 * 3]; // 10 rows, w = 3
-        assert_eq!(downsize::<4>(3, &mut s).0.len(), 3 * 3); // ceil(10/4) = 3 rows
+    fn returned_len_is_padded_to_4w() {
+        // 10 rows, w=3, N=4 -> ceil(10/4)=3 output rows -> 9 cells -> padded to 12
+        let mut s = [0u64; 10 * 3];
+        assert_eq!(downsize::<4>(3, &mut s).0.len(), 12);
     }
 
     // ---- Bad shapes ----

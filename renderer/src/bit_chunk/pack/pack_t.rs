@@ -1,9 +1,7 @@
 use std::{
     hint::unreachable_unchecked,
-    slice::{from_raw_parts, from_raw_parts_mut},
+    slice::from_raw_parts,
 };
-
-use crate::bit_chunk::pack::unchecked;
 
 /// compress for lanes of size 8, 16, 32 (byte, word, long)
 #[inline]
@@ -85,46 +83,6 @@ pub(super) fn pack_bwl<'a, const N: usize>(
     unsafe { from_raw_parts(dst.as_ptr() as *const u8, len) }
 }
 
-/// pack operation for lanes of size 64 (quad)
-pub(super) fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
-    assert!(w <= usize::MAX / 64);
-
-    let total = src.len();
-
-    assert!(w > 0 && total.is_multiple_of(w));
-
-    let bw = w.div_ceil(2);
-    let size = (total / w).div_ceil(4) * bw;
-    assert!(dst.len() * 8 >= size);
-
-    let mut base = 0;
-    let mut phase = 0;
-
-    let out = unsafe { from_raw_parts_mut(dst.as_mut_ptr() as *mut u8, size) };
-
-    for y in (0..total).step_by(w) {
-        for x in 0..w {
-            let col = x & 1;
-            let pixel = (unchecked!(src[y + x]) >> 56) as u8;
-            let offset = base + (x >> 1);
-
-            if phase == 0 && col == 0 {
-                unchecked!(out[offset] = pixel);
-                continue;
-            }
-
-            unchecked!(out[offset] |= pixel >> (phase + col));
-        }
-
-        phase += 2;
-        if phase == 8 {
-            phase = 0;
-            base += bw;
-        }
-    }
-
-    out
-}
 
 #[cfg(test)]
 mod tests {
