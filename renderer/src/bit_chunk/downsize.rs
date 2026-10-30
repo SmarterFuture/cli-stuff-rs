@@ -1,4 +1,9 @@
-use std::{hint::unreachable_unchecked, mem::transmute};
+use std::{
+    hint::{assert_unchecked, unreachable_unchecked},
+    mem::transmute,
+};
+
+use crate::bit_chunk::unchecked;
 
 #[inline]
 const fn cmp_ge<const N: usize>(x: u64) -> u64 {
@@ -75,60 +80,79 @@ fn combine<const N: usize>(acc: &mut u64, val: u64) {
     };
 }
 
-/// returns (data, junk)
+/// splits to two, [a..b] [b..]
+#[inline]
+unsafe fn split_offset(src: &mut [u64], a: usize, b: usize) -> (&mut [u64], &mut [u64]) {
+    debug_assert!(a < b && b < src.len());
+
+    let (s1, s2) = unsafe { src.split_at_mut_unchecked(b) };
+    let (_, s1) = unsafe { s1.split_at_mut_unchecked(a) };
+    (s1, s2)
+}
+
+#[inline]
+fn downsize_band<const N: usize>(w: usize, src: &[u64], dst: &mut [u64], n: usize) {
+    for i in 0..w {
+        let mut a = lane_popcount::<N>(unchecked!(src[i]));
+        for k in 1..n {
+            combine::<N>(&mut a, unchecked!(src[k * w + i]));
+        }
+        unchecked!(dst[i] = cmp_ge::<N>(a));
+    }
+}
+
+#[inline]
+fn downsize_band_overlap<const N: usize>(w: usize, src: &mut [u64], band: usize, n: usize) {
+    let src_off = band * N * w;
+
+    for i in 0..w {
+        let mut a = lane_popcount::<N>(unchecked!(src[src_off + i]));
+        for k in 1..n {
+            combine::<N>(&mut a, unchecked!(src[src_off + k * w + i]));
+        }
+        unchecked!(src[src_off + i] = cmp_ge::<N>(a));
+    }
+}
+
+/// returns (data, free)
 /// length of data is always divisible by 4w
+/// free buffer is non zero, and should not be assumed it is cleared
 pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
     const { assert!(N.is_power_of_two() && N > 1) }
-    assert!(w > 0 && src.len().is_multiple_of(w));
+    let total = src.len();
 
-    let mut base = 0;
-    // we start at 1 bc the first line is in-place mapped
-    let mut phase = 1;
+    assert!(w > 0 && total.is_multiple_of(w));
 
-    // only in-place mapping
-    for o in &mut src[..w] {
-        *o = lane_popcount::<N>(*o);
+    let rows = total / w;
+    let bands = rows / N;
+    let rem = rows % N;
+    let write = (bands + (rem > 0) as usize) * w;
+    let padded = write.next_multiple_of(4 * w);
+
+    assert!(padded <= total);
+
+    if bands > 0 {
+        downsize_band_overlap::<N>(w, src, 0, N);
+    } else if rem > 0 {
+        downsize_band_overlap::<N>(w, src, 0, rem);
     }
 
-    // well behaved full rows
-    for y in (w..src.len()).step_by(w) {
-        let (head, tail) = src.split_at_mut(y);
-        let out = &mut head[base..base + w]; // base < y always here
-        let row = &tail[..w];
-
-        if phase == 0 {
-            for x in 0..w {
-                out[x] = lane_popcount::<N>(row[x]);
-            }
-        } else if phase == N - 1 {
-            for x in 0..w {
-                let mut a = out[x];
-                combine::<N>(&mut a, row[x]);
-                out[x] = cmp_ge::<N>(a);
-            }
-        } else {
-            for x in 0..w {
-                combine::<N>(&mut out[x], row[x]);
-            }
-        }
-
-        phase += 1;
-        if phase == N {
-            phase = 0;
-            base += w;
-        }
+    for band in 1..bands {
+        let (dst, data) = unsafe { split_offset(src, band * w, band * w * N) };
+        downsize_band::<N>(w, data, dst, N);
     }
 
-    if phase != 0 {
-        for o in &mut src[base..base + w] {
-            *o = cmp_ge::<N>(*o);
-        }
-        base += w;
+    if bands > 0 && rem > 0 {
+        let (dst, data) = unsafe { split_offset(src, bands * w, bands * w * N) };
+        downsize_band::<N>(w, data, dst, rem);
     }
 
-    let padded = base.next_multiple_of(w * 4);
-    src[base..padded].fill(0);
+    src[write..padded].fill(0);
     src.split_at_mut(padded)
+}
+
+pub fn downsize2(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
+    downsize::<2>(w, src)
 }
 
 #[cfg(test)]
