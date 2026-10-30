@@ -1,7 +1,5 @@
 use std::{array::from_fn, slice::from_raw_parts_mut};
 
-use crate::bit_chunk::pack::unchecked;
-
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_or_si256, _mm256_permute4x64_epi64,
@@ -9,35 +7,29 @@ use std::arch::x86_64::{
 };
 
 #[cfg(target_arch = "x86_64")]
-macro_rules! load_block {
-    ($rows:ident, $x:expr) => {{
-        let __off = $x;
-        let a0 = _mm256_loadu_si256($rows[0].add(__off) as _);
-        let a1 = _mm256_srli_epi64::<16>(_mm256_loadu_si256($rows[1].add(__off) as _));
-        let a2 = _mm256_srli_epi64::<32>(_mm256_loadu_si256($rows[2].add(__off) as _));
-        let a3 = _mm256_srli_epi64::<48>(_mm256_loadu_si256($rows[3].add(__off) as _));
-        _mm256_or_si256(_mm256_or_si256(a0, a1), _mm256_or_si256(a2, a3))
-    }};
-}
+use crate::bit_chunk::pack::avx_helpers::loadbur_block;
+use crate::bit_chunk::unchecked;
 
 /// 4 columns of 4 rows -> 2 bytes
 #[inline]
 #[cfg(target_endian = "little")]
 #[target_feature(enable = "avx2")]
-unsafe fn pack_q_4by4_avx2(rows: &[*const u64; 4], x: usize, dst: *mut u8) {
+unsafe fn pack_q_4by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u8) {
     unsafe {
-        // useful bytes land in 0..8 (A) or 8..16 (B) of each 128-bit half
+        #[rustfmt::skip]
         let mask = _mm256_setr_epi8(
-            9, 1, 11, 3, 13, 5, 15, 7, -1, -1, -1, -1, -1, -1, -1, -1, 9, 1, 11, 3, 13, 5, 15, 7,
+            15, 7, 13, 5, 11, 3, 9, 1,
+            -1, -1, -1, -1, -1, -1, -1, -1,
+            15, 7, 13, 5, 11, 3, 9, 1,
             -1, -1, -1, -1, -1, -1, -1, -1,
         );
 
-        let t = load_block!(rows, x);
+        let t = loadbur_block!(rows_ptr, x, 6, 4, 2);
 
         let u = _mm256_shuffle_epi8(t, mask);
         let m = _mm256_movemask_epi8(u) as u32;
         let cell = (m & 0xFF) | ((m >> 8) & 0xFF00);
-        (dst as *mut u16).write_unaligned(cell as u16);
+        (dst_ptr as *mut u16).write_unaligned(cell as u16);
     }
 }
 
@@ -45,30 +37,38 @@ unsafe fn pack_q_4by4_avx2(rows: &[*const u64; 4], x: usize, dst: *mut u8) {
 #[inline]
 #[cfg(target_endian = "little")]
 #[target_feature(enable = "avx2")]
-unsafe fn pack_q_8by4_avx2(rows: &[*const u64; 4], x: usize, dst: *mut u8) {
+unsafe fn pack_q_8by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u8) {
     unsafe {
-        // useful bytes land in 0..8 (A) or 8..16 (B) of each 128-bit half
+        use crate::bit_chunk::pack::avx_helpers::load_block;
+
+        #[rustfmt::skip]
         let mask_a = _mm256_setr_epi8(
-            9, 1, 11, 3, 13, 5, 15, 7, -1, -1, -1, -1, -1, -1, -1, -1, 9, 1, 11, 3, 13, 5, 15, 7,
+            15, 7, 13, 5, 11, 3, 9, 1,
+            -1, -1, -1, -1, -1, -1, -1, -1,
+            15, 7, 13, 5, 11, 3, 9, 1,
             -1, -1, -1, -1, -1, -1, -1, -1,
         );
+
+        #[rustfmt::skip]
         let mask_b = _mm256_setr_epi8(
-            -1, -1, -1, -1, -1, -1, -1, -1, 9, 1, 11, 3, 13, 5, 15, 7, -1, -1, -1, -1, -1, -1, -1,
-            -1, 9, 1, 11, 3, 13, 5, 15, 7,
+            -1, -1, -1, -1, -1, -1, -1, -1,
+            9, 1, 11, 3, 13, 5, 15, 7,
+            -1, -1, -1, -1, -1, -1, -1, -1,
+            9, 1, 11, 3, 13, 5, 15, 7,
         );
 
-        let ta = load_block!(rows, x);
-        let tb = load_block!(rows, x + 4);
+        let ta = loadbur_block!(rows_ptr, x, 6, 4, 2);
+        let tb = load_block!(rows_ptr, x + 4, 16, 32, 48);
 
         let c = _mm256_or_si256(
             _mm256_shuffle_epi8(ta, mask_a),
             _mm256_shuffle_epi8(tb, mask_b),
         );
 
-        // u64 lanes are [A0, B0, A1, B1]; reorder to [A0, A1, B0, B1] = column order
+        // in [a, c, b, d] -> [a->a, c->b, b->c, d->d] -> 1101_1000 (reverse order)
         let c = _mm256_permute4x64_epi64::<0xD8>(c);
 
-        (dst as *mut u32).write_unaligned(_mm256_movemask_epi8(c) as u32);
+        (dst_ptr as *mut u32).write_unaligned(_mm256_movemask_epi8(c) as u32);
     }
 }
 
@@ -103,7 +103,7 @@ unsafe fn pack_q_band_avx2(src: *const u64, dst: *mut u8, w: usize, y: usize, ba
     for x in (0..main).step_by(8) {
         unsafe { pack_q_8by4_avx2(&rows, x, out.add(x / 2)) };
     }
-    
+
     let mut x = main;
     if w - x >= 4 {
         unsafe { pack_q_4by4_avx2(&rows, x, out.add(x / 2)) };
@@ -299,7 +299,7 @@ mod tests {
 
         let w = 16;
         let mut pattern = vec![false; 4 * w];
-        
+
         // Light up Column 0 (byte 0), Column 8 (byte 4), and Column 15 (byte 7, right bit)
         for r in 0..4 {
             pattern[r * w] = true;

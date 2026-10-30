@@ -1,6 +1,6 @@
 use std::{array::from_fn, hint::unreachable_unchecked, slice::from_raw_parts};
 
-use crate::bit_chunk::pack::unchecked;
+use crate::bit_chunk::unchecked;
 
 /// broadcasts lower 32 bits of u64 which holds 8 nibbles to full u64, so each nibble now occupies
 /// top bits of byte

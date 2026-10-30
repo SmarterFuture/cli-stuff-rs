@@ -1,6 +1,6 @@
 use std::{array::from_fn, slice::from_raw_parts};
 
-use crate::bit_chunk::pack::unchecked;
+use crate::bit_chunk::unchecked;
 
 #[inline(always)]
 unsafe fn pack_n_band<const R: usize>(

@@ -1,34 +1,20 @@
 use std::hint::unreachable_unchecked;
 
-use crate::bit_chunk::pack::{crumb::pack_c, nibble::pack_n, pack_t::pack_bwl, quad::pack_q};
+use crate::bit_chunk::pack::{
+    byte_word_long::{pack_b, pack_bwl},
+    crumb::pack_c,
+    nibble::pack_n,
+    quad::pack_q,
+};
 
+mod avx_helpers;
+mod byte_avx;
+mod byte_word_long;
 mod crumb;
+mod long_avx;
 mod nibble;
-mod pack_t;
 mod quad;
-
-macro_rules! unchecked {
-    ($src:ident[$idx:expr] $op:tt $rest:expr) => {
-        unsafe {
-            debug_assert!($idx < $src.len());
-            *$src.get_unchecked_mut($idx) $op $rest
-        }
-    };
-    ($src:ident[$idx:expr]) => {
-        unsafe {
-            debug_assert!($idx < $src.len());
-            *$src.get_unchecked($idx)
-        }
-    };
-    (*$ptr:ident[$idx:expr]) => {
-        unsafe { *$ptr.add($idx) }
-    };
-    (*$ptr:ident[$idx:expr] $op:tt $rest:expr) => {
-        unsafe { *$ptr.add($idx) $op $rest}
-    };
-}
-
-pub(super) use unchecked;
+mod word_avx;
 
 /// pack operation dispatching to crumb/nibble/byte/word/long/quad impls by lane size N
 /// braids `src` 2 columns at a time down all rows, writing packed output into `dst` and
@@ -41,7 +27,7 @@ pub fn pack<'a, const N: usize>(w: usize, src: &mut [u64], dst: &'a mut [u64]) -
     match N {
         2 => pack_c(w, src, dst),
         4 => pack_n(w, src, dst),
-        8 => pack_bwl::<8>(w, src, dst),
+        8 => pack_b(w, src, dst),
         16 => pack_bwl::<16>(w, src, dst),
         32 => pack_bwl::<32>(w, src, dst),
         64 => pack_q(w, src, dst),
