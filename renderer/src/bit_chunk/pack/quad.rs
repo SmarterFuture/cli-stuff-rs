@@ -3,7 +3,7 @@ use std::{array::from_fn, slice::from_raw_parts_mut};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_or_si256, _mm256_permute4x64_epi64,
-    _mm256_setr_epi8, _mm256_shuffle_epi8, _mm256_srli_epi64,
+    _mm256_setr_epi8, _mm256_shuffle_epi8,
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -39,8 +39,6 @@ unsafe fn pack_q_4by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u
 #[target_feature(enable = "avx2")]
 unsafe fn pack_q_8by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u8) {
     unsafe {
-        use crate::bit_chunk::pack::avx_helpers::load_block;
-
         #[rustfmt::skip]
         let mask_a = _mm256_setr_epi8(
             15, 7, 13, 5, 11, 3, 9, 1,
@@ -52,13 +50,13 @@ unsafe fn pack_q_8by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u
         #[rustfmt::skip]
         let mask_b = _mm256_setr_epi8(
             -1, -1, -1, -1, -1, -1, -1, -1,
-            9, 1, 11, 3, 13, 5, 15, 7,
+            15, 7, 13, 5, 11, 3, 9, 1,
             -1, -1, -1, -1, -1, -1, -1, -1,
-            9, 1, 11, 3, 13, 5, 15, 7,
+            15, 7, 13, 5, 11, 3, 9, 1,
         );
 
         let ta = loadbur_block!(rows_ptr, x, 6, 4, 2);
-        let tb = load_block!(rows_ptr, x + 4, 16, 32, 48);
+        let tb = loadbur_block!(rows_ptr, x + 4, 6, 4, 2);
 
         let c = _mm256_or_si256(
             _mm256_shuffle_epi8(ta, mask_a),
@@ -73,11 +71,11 @@ unsafe fn pack_q_8by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u
 }
 
 #[inline(always)]
-unsafe fn pack_q_cols_scalar(rows: &[*const u64; 4], mut x: usize, w: usize, dst: *mut u8) {
+unsafe fn pack_q_cols_scalar(rows_ptr: &[*const u64; 4], mut x: usize, w: usize, dst_ptr: *mut u8) {
     let mut p = x / 2;
     while x < w {
         let mut acc = 0u8;
-        for (r, row_ptr) in rows.iter().enumerate() {
+        for (r, row_ptr) in rows_ptr.iter().enumerate() {
             let a = (unchecked!(*row_ptr[x]) >> 56) as u8;
             let b = if x + 1 < w {
                 (unchecked!(*row_ptr[x + 1]) >> 56) as u8
@@ -86,7 +84,7 @@ unsafe fn pack_q_cols_scalar(rows: &[*const u64; 4], mut x: usize, w: usize, dst
             };
             acc |= (a | b >> 1) >> (2 * r);
         }
-        unsafe { *dst.add(p) = acc };
+        unsafe { *dst_ptr.add(p) = acc };
         p += 1;
         x += 2;
     }

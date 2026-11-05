@@ -116,7 +116,7 @@ fn downsize_band_overlap<const N: usize>(w: usize, src: &mut [u64], band: usize,
 
 /// returns (data, free)
 /// length of data is always divisible by 4w
-/// free buffer is non zero, and should not be assumed it is cleared
+/// free buffer is non-empty and not zeroed
 pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
     const { assert!(N.is_power_of_two() && N > 1) }
     let total = src.len();
@@ -126,7 +126,7 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
     let rows = total / w;
     let bands = rows / N;
     let rem = rows % N;
-    let write = (bands + (rem > 0) as usize) * w;
+    let write = rows.div_ceil(N) * w;
     let padded = write.next_multiple_of(4 * w);
 
     assert!(padded <= total);
@@ -149,10 +149,6 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
 
     src[write..padded].fill(0);
     src.split_at_mut(padded)
-}
-
-pub fn downsize2(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
-    downsize::<2>(w, src)
 }
 
 #[cfg(test)]
