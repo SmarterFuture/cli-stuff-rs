@@ -18,7 +18,7 @@ impl Size {
     }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub enum Quad {
     Left,
     Center,

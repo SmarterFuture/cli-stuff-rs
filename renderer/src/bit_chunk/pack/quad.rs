@@ -71,8 +71,9 @@ unsafe fn pack_q_8by4_avx2(rows_ptr: &[*const u64; 4], x: usize, dst_ptr: *mut u
 }
 
 #[inline(always)]
-unsafe fn pack_q_cols_scalar(rows_ptr: &[*const u64; 4], mut x: usize, w: usize, dst_ptr: *mut u8) {
+unsafe fn pack_q_band(rows_ptr: &[*const u64; 4], mut x: usize, dst_ptr: *mut u8, w: usize) {
     let mut p = x / 2;
+    // FUTURE: maybe change this to for loop
     while x < w {
         let mut acc = 0u8;
         for (r, row_ptr) in rows_ptr.iter().enumerate() {
@@ -90,40 +91,14 @@ unsafe fn pack_q_cols_scalar(rows_ptr: &[*const u64; 4], mut x: usize, w: usize,
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn pack_q_band_avx2(src: *const u64, dst: *mut u8, w: usize, y: usize, base: usize) {
-    let rows: [*const u64; 4] = unsafe { from_fn(|r| src.add(y + r * w)) };
-
-    let out = unsafe { dst.add(base) };
-
-    let main = w & !7;
-    for x in (0..main).step_by(8) {
-        unsafe { pack_q_8by4_avx2(&rows, x, out.add(x / 2)) };
-    }
-
-    let mut x = main;
-    if w - x >= 4 {
-        unsafe { pack_q_4by4_avx2(&rows, x, out.add(x / 2)) };
-        x += 4;
-    }
-
-    unsafe { pack_q_cols_scalar(&rows, x, w, out) };
-}
-
-unsafe fn pack_q_band_scalar(src: *const u64, dst: *mut u8, w: usize, y: usize, base: usize) {
-    let rows: [*const u64; 4] = unsafe { from_fn(|r| src.add(y + r * w)) };
-    unsafe { pack_q_cols_scalar(&rows, 0, w, dst.add(base)) };
-}
-
 /// pack operation for lanes of size 64 (quad)
 pub(super) fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] {
     assert!(w <= usize::MAX / 64);
     let total = src.len();
     assert!(w > 0 && total.is_multiple_of(w * 4));
 
-    let bw = w.div_ceil(2);
-    let size = (total / w).div_ceil(4) * bw;
+    let step = w.div_ceil(2);
+    let size = (total / w).div_ceil(4) * step;
     assert!(dst.len() * 8 >= size);
 
     let bands = total / (w * 4);
@@ -139,17 +114,32 @@ pub(super) fn pack_q<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] 
     let avx2 = is_x86_feature_detected!("avx2");
 
     for band in 0..bands {
-        let y = band * 4 * w;
+        // FUTURE: maybe do not recompute but just add, maybe it will reuse old regs that already hold this
+        let rows: [*const u64; 4] = unsafe { from_fn(|r| src_ptr.add(band * 4 * w + r * w)) };
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
         if avx2 {
-            unsafe { pack_q_band_avx2(src_ptr, dst_ptr, w, y, base) };
-            base += bw;
-            continue;
+            let mut main = w & !7;
+            for x in (0..main).step_by(8) {
+                unsafe {
+                    pack_q_8by4_avx2(&rows, x, dst_ptr.add(base + x / 2));
+                }
+            }
+
+            if w & 7 >= 4 {
+                unsafe { pack_q_4by4_avx2(&rows, main, dst_ptr.add(base + main / 2)) };
+                main += 4;
+            }
+
+            unsafe { pack_q_band(&rows, main, dst_ptr.add(base), w) };
         }
 
-        unsafe { pack_q_band_scalar(src_ptr, dst_ptr, w, y, base) };
-        base += bw;
+        #[cfg(not(all(target_arch = "x86_64", target_endian = "little")))]
+        unsafe {
+            pack_q_band(&rows, 0, dst_ptr.add(base), w);
+        };
+
+        base += step;
     }
 
     out

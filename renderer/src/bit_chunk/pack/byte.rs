@@ -102,6 +102,7 @@ pub(super) fn pack_b<'a>(w: usize, src: &[u64], dst: &'a mut [u64]) -> &'a [u8] 
     let avx2 = is_x86_feature_detected!("avx2");
 
     for band in 0..bands {
+        // FUTURE: maybe do not recompute but just add, maybe it will reuse old regs that already hold this
         let rows: [*const u64; 4] = unsafe { from_fn(|r| src_ptr.add(band * step + r * w)) };
 
         #[cfg(all(target_arch = "x86_64", target_endian = "little"))]

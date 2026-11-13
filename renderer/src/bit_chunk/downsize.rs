@@ -1,7 +1,4 @@
-use std::{
-    hint::{assert_unchecked, unreachable_unchecked},
-    mem::transmute,
-};
+use std::{hint::unreachable_unchecked, mem::transmute};
 
 use crate::bit_chunk::unchecked;
 
@@ -90,6 +87,7 @@ unsafe fn split_offset(src: &mut [u64], a: usize, b: usize) -> (&mut [u64], &mut
     (s1, s2)
 }
 
+// FUTURE: maybe make N specific to shave like 10ish cycles (around 50% per collection point)
 #[inline]
 fn downsize_band<const N: usize>(w: usize, src: &[u64], dst: &mut [u64], n: usize) {
     for i in 0..w {
@@ -149,6 +147,10 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
 
     src[write..padded].fill(0);
     src.split_at_mut(padded)
+}
+
+pub fn downsize2(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
+    downsize::<2>(w, src)
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
 use std::iter;
 
-use renderer::traits::Renderble;
+use renderer::traits::Renderable;
 
 use crate::snake::{Status, Tile};
 
-impl Renderble for Tile {
+impl Renderable for Tile {
     type Primitive = char;
     fn render(&self) -> impl Iterator<Item = Self::Primitive> {
         iter::once(match self {
@@ -16,7 +16,7 @@ impl Renderble for Tile {
     }
 }
 
-impl Renderble for Status {
+impl Renderable for Status {
     type Primitive = char;
     fn render(&self) -> impl Iterator<Item = Self::Primitive> {
         let owned = format!("Status: {:>4} Difficulty: {:>4}", self.score, self.diff)

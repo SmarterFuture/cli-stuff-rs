@@ -1,6 +1,6 @@
 use rand::Rng;
 use renderer::{
-    traits::{RenderTarget, Renderble},
+    traits::{RenderTarget, Renderable},
     types::Size,
 };
 
@@ -179,14 +179,14 @@ where
 
     pub fn draw_snake_to<F>(&self, target: &mut F) -> Result<(), F::Error>
     where
-        F: RenderTarget<<Tile as Renderble>::Primitive>,
+        F: RenderTarget<<Tile as Renderable>::Primitive>,
     {
         target.draw(self.buf.iter().flat_map(|x| x.render()))
     }
 
     pub fn draw_status_to<F>(&self, target: &mut F) -> Result<(), F::Error>
     where
-        F: RenderTarget<<Status as Renderble>::Primitive>,
+        F: RenderTarget<<Status as Renderable>::Primitive>,
     {
         target.draw(self.status.render())
     }

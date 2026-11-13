@@ -1,4 +1,4 @@
-pub trait Renderble {
+pub trait Renderable {
     type Primitive;
     fn render(&self) -> impl Iterator<Item = Self::Primitive>;
 }
