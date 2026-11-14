@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use crate::{
-    chunk_iter::{Collector, ToChunks},
+    chunk_iter::{Collector, TilesExt},
     traits::RenderTarget,
     types::Size,
 };
@@ -73,14 +73,19 @@ pub struct HighResBWScreen {
     w: usize,
     rw: usize,
     res: Res,
+    tmp: Vec<u8>,
 }
 
 impl HighResBWScreen {
     pub fn new(w: usize, res: Res) -> Self {
+        let max = w.div_ceil(res.to_size().w);
+        let v = vec![0u8; max];
+
         Self {
             w,
             rw: w.div_ceil(res.to_size().w),
             res,
+            tmp: v,
         }
     }
 }
@@ -108,7 +113,8 @@ impl RenderTarget<bool> for HighResBWScreen {
         let size = self.res.to_size();
 
         let mut scaled = items
-            .to_chunks::<u8>(self.w, size.w, size.h)
+            // not sure if this actually sped things up or no, but here we are
+            .tiles_in::<u8>(self.w, size.w as u8, size.h as u8, &mut self.tmp)
             .map(|x| self.res.render(x));
 
         loop {

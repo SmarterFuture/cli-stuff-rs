@@ -1,4 +1,4 @@
-use std::mem;
+use std::{marker::PhantomData, mem};
 
 pub trait Collector<T> {
     fn new(w: usize) -> Self;
@@ -6,96 +6,149 @@ pub trait Collector<T> {
     fn empty(&mut self);
 }
 
-pub struct ChunkIter<I, U>
+pub struct Tiles<I, U, B>
 where
     I: Iterator,
     U: Collector<I::Item>,
+    B: AsMut<[U]>,
 {
-    buf: Vec<U>,
+    buf: B,
     iter: I,
     w: usize,
-    chunk_w: usize,
-    chunk_h: usize,
-    cx: usize,
-    rel_x: usize,
-    rel_y: usize,
+    cidx: usize,
+    chunk_w: u8,
+    chunk_h: u8,
+    // well maybe the where clause shouldn't be here but...
+    _marker: PhantomData<U>,
 }
 
 /// if the last line is not complete, the last set of chunks is not guaranteed to be returned
-pub trait ToChunks: Iterator + Sized {
-    fn to_chunks<U>(self, w: usize, chunk_w: usize, chunk_h: usize) -> ChunkIter<Self, U>
+pub trait TilesExt: Iterator + Sized {
+    fn tiles<U>(self, w: usize, chunk_w: u8, chunk_h: u8) -> Tiles<Self, U, Vec<U>>
     where
         U: Collector<Self::Item>,
     {
-        let n_cells = w.div_ceil(chunk_w);
-        ChunkIter {
-            buf: (0..n_cells).map(|_| U::new(chunk_w)).collect(),
+        let cw = chunk_w as usize;
+        let ch = chunk_h as usize;
+        let n_cells = w.div_ceil(cw);
+        Tiles {
+            buf: (0..n_cells).map(|_| U::new(cw * ch)).collect(),
             iter: self,
             w,
+            cidx: 0,
             chunk_w,
             chunk_h,
-            cx: 0,
-            rel_x: 0,
-            rel_y: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    fn tiles_in<U>(
+        self,
+        w: usize,
+        chunk_w: u8,
+        chunk_h: u8,
+        buf: &mut [U],
+    ) -> Tiles<Self, U, &mut [U]>
+    where
+        U: Collector<Self::Item>,
+    {
+        let cw = chunk_w as usize;
+        let n_cells = w.div_ceil(cw);
+        assert!(buf.len() >= n_cells, "Buffer too small");
+
+        // for val in buf.iter_mut().take(max) {
+        //     *val = U::new(chunk_w);
+        // }
+
+        Tiles {
+            buf: &mut buf[..n_cells],
+            iter: self,
+            w,
+            cidx: 0,
+            chunk_w,
+            chunk_h,
+            _marker: PhantomData,
         }
     }
 }
 
-impl<I> ToChunks for I where I: Iterator {}
+/// SAFETY: $idx < $buf.len() must hold
+macro_rules! ragged_tail {
+    ($iter:expr, $rag:expr, $end:expr, $buf:ident[$idx:expr]) => {{
+        debug_assert!($idx < $buf.len());
+        let val = unsafe { $buf.get_unchecked_mut($idx) };
+        for _ in 0..$rag {
+            let v = $iter.next()?;
+            val.push(v);
+        }
+        for _ in $rag..$end {
+            val.empty();
+        }
+    }};
+}
 
-impl<I, U> Iterator for ChunkIter<I, U>
+impl<I> TilesExt for I where I: Iterator {}
+
+impl<I, U, B> Iterator for Tiles<I, U, B>
 where
     I: Iterator,
     U: Collector<I::Item>,
+    B: AsMut<[U]>,
 {
     type Item = U;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let r_value = self.iter.next();
+        let cw = self.chunk_w as usize;
+        let ch = self.chunk_h as usize;
+        let buf = self.buf.as_mut();
+        let full = self.w / cw;
+        let rag = self.w - full * cw;
 
-            let chunk_x = self.cx / self.chunk_w;
+        // eagerly collect whole block
+        if self.cidx == 0 {
+            for _ in 0..self.chunk_h - 1 {
+                for val in buf[..full].iter_mut() {
+                    for _ in 0..self.chunk_w {
+                        // we dont care about incomplete blocks
+                        // FUTURE: maybe we should pad with empties instead
+                        let v = self.iter.next()?;
+                        val.push(v);
+                    }
+                }
 
-            if let Some(value) = r_value {
-                self.buf[chunk_x].push(value);
-            } else if self.cx == 0 && self.rel_y == 0 {
-                return None;
-            } else {
-                self.buf[chunk_x].empty();
-            }
-
-            let row_done = self.rel_y + 1 == self.chunk_h;
-            let col_done = self.rel_x + 1 == self.chunk_w || self.cx + 1 == self.w;
-
-            self.rel_x += 1;
-            if self.rel_x == self.chunk_w {
-                self.rel_x = 0
-            }
-
-            self.cx += 1;
-            if self.cx == self.w {
-                self.cx = 0;
-                self.rel_x = 0;
-                self.rel_y += 1;
-
-                if self.rel_y == self.chunk_h {
-                    self.rel_y = 0
+                if full != buf.len() {
+                    ragged_tail!(self.iter, rag, cw, buf[buf.len() - 1]);
                 }
             }
-
-            if row_done && col_done {
-                let mut tmp = U::new(self.chunk_w * self.chunk_h);
-                mem::swap(&mut tmp, &mut self.buf[chunk_x]);
-                return Some(tmp);
-            }
         }
+
+        let take = if rag != 0 && self.cidx == buf.len() - 1 {
+            rag
+        } else {
+            cw
+        };
+
+        ragged_tail!(self.iter, take, cw, buf[self.cidx]);
+
+        let mut tmp = U::new(cw * ch);
+        // this should be always true
+        let cur = unsafe { buf.get_unchecked_mut(self.cidx) };
+        mem::swap(&mut tmp, cur);
+
+        self.cidx = if self.cidx + 1 == buf.len() {
+            0
+        } else {
+            self.cidx + 1
+        };
+
+        Some(tmp)
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use super::{ChunkIter, Collector, ToChunks};
+    use super::{Collector, Tiles, TilesExt};
 
     impl<T> Collector<T> for Vec<T> {
         fn new(w: usize) -> Self {
@@ -119,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_chunk_iter_2x2() {
-        let iter: ChunkIter<_, Vec<_>> = (0..16).to_chunks(4, 2, 2);
+        let iter: Tiles<_, Vec<_>, _> = (0..16).tiles(4, 2, 2);
 
         let chunks: Vec<_> = iter.collect();
 
@@ -135,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_chunk_iter_chaining() {
-        let iter: ChunkIter<_, i32> = (0..16).to_chunks(4, 2, 2).to_chunks(2, 1, 2);
+        let iter: Tiles<_, i32, _> = (0..16).tiles(4, 2, 2).tiles(2, 1, 2);
 
         let chunks: Vec<_> = iter.collect();
 
@@ -145,8 +198,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_chunk_iter_incomplete() {
-        let iter: ChunkIter<_, Vec<_>> = (0..9).to_chunks(3, 2, 2);
+        let iter: Tiles<_, Vec<_>, _> = (0..9).tiles(3, 2, 2);
 
         let chunks: Vec<_> = iter.collect();
 

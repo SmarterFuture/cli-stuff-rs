@@ -23,8 +23,8 @@ const APPLE: &[u8] = include_bytes!("../assets/apple480.raw");
 // const APPLE: &[u8] = include_bytes!("../assets/apple_short.raw");
 const FPS: u64 = 30;
 
-fn play_apple(scale: usize, fps: u64, res: Res) -> io::Result<()> {
-    let w = WIDTH.div_ceil(scale);
+fn play_apple(scale: u8, fps: u64, res: Res) -> io::Result<()> {
+    let w = WIDTH.div_ceil(scale as usize);
 
     let mut screen = HighResBWScreen::new(w, res);
     let mut statusline = TermStatusLine::new(w);
@@ -92,7 +92,7 @@ fn play_apple(scale: usize, fps: u64, res: Res) -> io::Result<()> {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut scale: usize = 1;
+    let mut scale: u8 = 1;
     let mut fps: u64 = FPS;
     let mut res: Res = Res::High;
 
@@ -104,11 +104,12 @@ fn main() {
 
         match arg.as_str() {
             "-s" | "--scale" => {
-                scale = val.parse().unwrap();
-                if !(0..=100).contains(&scale) {
+                let rscale = val.parse().unwrap();
+                if !(0..=100).contains(&rscale) {
                     eprintln!("Scale is not in range [0, 100]!");
                     return;
                 }
+                scale = rscale as u8;
             }
             "-r" | "--rate" => {
                 fps = val.parse().unwrap();

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use renderer::{
-    chunk_iter::{Collector, ToChunks},
+    chunk_iter::{Collector, TilesExt},
     traits::RenderTarget,
 };
 
@@ -31,12 +31,12 @@ where
     w: usize,
     h: usize,
     iter: I,
-    scale: usize,
+    scale: u8,
     threshold: u16,
 }
 
 pub trait ToFrames: Iterator<Item = bool> + Sized {
-    fn to_frames(self, w: usize, h: usize, scale: usize) -> FramesIter<Self> {
+    fn to_frames(self, w: usize, h: usize, scale: u8) -> FramesIter<Self> {
         FramesIter {
             w,
             h,
@@ -59,7 +59,7 @@ where
         let r_frame = self.iter.by_ref().take(self.w * self.h);
 
         let pixels: Vec<bool> = r_frame
-            .to_chunks::<Threshold>(self.w, self.scale, self.scale)
+            .tiles::<Threshold>(self.w, self.scale, self.scale)
             .map(|x| *x > self.threshold)
             .collect();
 
