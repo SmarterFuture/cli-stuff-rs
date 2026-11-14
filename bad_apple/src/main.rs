@@ -19,14 +19,15 @@ mod frame;
 
 const WIDTH: usize = 480;
 const HEIGHT: usize = 360;
-const APPLE: &[u8] = include_bytes!("../assets/apple480.raw");
-// const APPLE: &[u8] = include_bytes!("../assets/apple_short.raw");
+// const APPLE: &[u8] = include_bytes!("../assets/apple480.raw");
+const APPLE: &[u8] = include_bytes!("../assets/apple480_1024f.raw");
 const FPS: u64 = 30;
 
 fn play_apple(scale: u8, fps: u64, res: Res) -> io::Result<()> {
     let w = WIDTH.div_ceil(scale as usize);
+    let h = HEIGHT.div_ceil(scale as usize);
 
-    let mut screen = HighResBWScreen::new(w, res);
+    let mut screen = HighResBWScreen::new(w, h, res);
     let mut statusline = TermStatusLine::new(w);
 
     screen.init()?;
@@ -63,6 +64,8 @@ fn play_apple(scale: u8, fps: u64, res: Res) -> io::Result<()> {
 
     let sleep = Duration::from_micros(1_000_000 / fps);
 
+    let mut samples: Vec<u64> = Vec::with_capacity(1024);
+
     while let Ok(frame) = frames_rx.recv() {
         frame.draw_frame_to(&mut screen)?;
         // statusline.draw("Press q to exit!".chars())?;
@@ -72,11 +75,17 @@ fn play_apple(scale: u8, fps: u64, res: Res) -> io::Result<()> {
         }
 
         let delta = frame_st.elapsed();
+        samples.push(delta.as_micros() as u64);
         statusline.draw(format!("dt: {}us     ", delta.as_micros()).chars())?;
 
         thread::sleep(sleep.saturating_sub(delta));
         frame_st = Instant::now();
     }
+
+    samples.sort_unstable();
+    let n = samples.len().max(1);
+    let mean = samples.iter().sum::<u64>() / n as u64;
+    let median = samples.get(samples.len() / 2).copied().unwrap_or(0);
 
     let total = start.elapsed();
 
@@ -86,6 +95,7 @@ fn play_apple(scale: u8, fps: u64, res: Res) -> io::Result<()> {
     statusline.exit()?;
 
     println!("Total: {:.2}", total.as_secs_f64());
+    println!("Mean: {:.3}\nMedian: {:.3}", mean, median);
 
     Ok(())
 }

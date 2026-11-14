@@ -8,7 +8,7 @@ use crate::{
 
 const BLOCK_TABLE: [char; 4] = [' ', '▄', '▀', '█'];
 const SEXTANT_TABLE: [char; 64] = [
-    ' ', '🬞', '🬏', '🬭', '🬇', '🬦', '🬖', '🬵', '🬃', '🬢', '🬓', '🬱', '🬋', '🬩', '🬚', '🬹', '🬁', '🬠', '🬑',
+    '⠀', '🬞', '🬏', '🬭', '🬇', '🬦', '🬖', '🬵', '🬃', '🬢', '🬓', '🬱', '🬋', '🬩', '🬚', '🬹', '🬁', '🬠', '🬑',
     '🬯', '🬉', '▐', '🬘', '🬷', '🬅', '🬤', '🬔', '🬳', '🬍', '🬫', '🬜', '🬻', '🬀', '🬟', '🬐', '🬮', '🬈', '🬧',
     '🬗', '🬶', '🬄', '🬣', '▌', '🬲', '🬌', '🬪', '🬛', '🬺', '🬂', '🬡', '🬒', '🬰', '🬊', '🬨', '🬙', '🬸', '🬆',
     '🬥', '🬕', '🬴', '🬎', '🬬', '🬝', '█',
@@ -71,18 +71,20 @@ impl Collector<bool> for u8 {
 
 pub struct HighResBWScreen {
     w: usize,
+    h: usize,
     rw: usize,
     res: Res,
     tmp: Vec<u8>,
 }
 
 impl HighResBWScreen {
-    pub fn new(w: usize, res: Res) -> Self {
+    pub fn new(w: usize, h: usize, res: Res) -> Self {
         let max = w.div_ceil(res.to_size().w);
         let v = vec![0u8; max];
 
         Self {
             w,
+            h,
             rw: w.div_ceil(res.to_size().w),
             res,
             tmp: v,
@@ -117,16 +119,17 @@ impl RenderTarget<bool> for HighResBWScreen {
             .tiles_in::<u8>(self.w, size.w as u8, size.h as u8, &mut self.tmp)
             .map(|x| self.res.render(x));
 
-        loop {
-            let line = scaled.by_ref().take(self.rw).collect::<String>();
+        let lines = self.h / size.h;
+        // should be <4 for all currently supported "resolutions"
+        let cap = lines * (2 + self.rw * 4);
+        let mut out = String::with_capacity(cap);
 
-            if line.is_empty() {
-                break;
-            }
-
-            print!("\n\r{}", line);
+        for _ in 0..lines {
+            out.push_str("\n\r");
+            out.extend(scaled.by_ref().take(self.rw));
         }
 
+        io::stdout().write_all(out.as_bytes())?;
         io::stdout().flush()
     }
 }
