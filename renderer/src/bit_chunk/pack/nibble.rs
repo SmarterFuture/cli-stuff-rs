@@ -16,6 +16,7 @@ unsafe fn pack_n_band<const R: usize>(
         let mut acc = 0;
 
         for (r, &row_p) in row_ptrs.iter().enumerate() {
+            // FIXME: this is vpgather for some reason
             let raw = unchecked!(*row_p[x]).to_be();
             let val = (raw | raw << 3) & 0xC0C0_C0C0_C0C0_C0C0;
 

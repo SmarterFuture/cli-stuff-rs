@@ -24,7 +24,8 @@ const fn lane_popcount<const N: usize>(x: u64) -> u64 {
     const M3: u64 = 0x3333_3333_3333_3333;
     const M5: u64 = 0x5555_5555_5555_5555;
     const MF: u64 = 0x0F0F_0F0F_0F0F_0F0F;
-    const MFF: u64 = 0x00FF_00FF_00FF_00FF;
+    const M2F: u64 = 0x00FF_00FF_00FF_00FF;
+    const M4F: u64 = 0x0000_FFFF_0000_FFFF;
 
     match N {
         2 => ((x >> 1) & M5) + (x & M5),
@@ -38,12 +39,12 @@ const fn lane_popcount<const N: usize>(x: u64) -> u64 {
         }
         16 => {
             let v = lane_popcount::<8>(x);
-            (v & MFF) + ((v >> 8) & MFF)
+            (v & M2F) + ((v >> 8) & M2F)
         }
-        32 => unsafe {
-            let v = transmute::<u64, [u32; 2]>(x);
-            transmute::<[u32; 2], u64>([v[0].count_ones(), v[1].count_ones()])
-        },
+        32 => {
+            let v = lane_popcount::<16>(x);
+            (v & M4F) + ((v >> 16) & M4F)
+        }
         64 => x.count_ones() as u64,
         _ => unsafe { unreachable_unchecked() },
     }
@@ -115,7 +116,7 @@ fn downsize_band_overlap<const N: usize>(w: usize, src: &mut [u64], band: usize,
 /// returns (data, free)
 /// length of data is always divisible by 4w
 /// free buffer is non-empty and not zeroed
-pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
+pub fn downsize_pow2<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
     const { assert!(N.is_power_of_two() && N > 1) }
     let total = src.len();
 
@@ -150,7 +151,7 @@ pub fn downsize<const N: usize>(w: usize, src: &mut [u64]) -> (&mut [u64], &mut 
 }
 
 pub fn downsize2(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
-    downsize::<2>(w, src)
+    downsize_pow2::<2>(w, src)
 }
 
 #[cfg(test)]
@@ -183,7 +184,7 @@ mod tests {
     fn n2_single_group() {
         // 2 rows, w=1, N=2 -> 1 output row, padded to 4
         let mut s = [0b0111, 0b0000, 0, 0];
-        let out = downsize::<2>(1, &mut s).0;
+        let out = downsize_pow2::<2>(1, &mut s).0;
         // lane0: popcount(0b11) + popcount(0b00) = 2 -> on
         // lane1: popcount(0b01) + popcount(0b00) = 1 -> off
         assert_eq!(out, [0b10, 0, 0, 0]);
@@ -193,7 +194,7 @@ mod tests {
     fn n2_exact_threshold_split_across_rows() {
         // 1 + 1 = 2 -> on
         let mut s = [0b01, 0b01, 0, 0];
-        let out = downsize::<2>(1, &mut s).0;
+        let out = downsize_pow2::<2>(1, &mut s).0;
         assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
@@ -201,7 +202,7 @@ mod tests {
     fn n2_saturation_still_on() {
         // 2 + 2 = 4 saturates to 3, still >= 2
         let mut s = [0b11, 0b11, 0, 0];
-        let out = downsize::<2>(1, &mut s).0;
+        let out = downsize_pow2::<2>(1, &mut s).0;
         assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
@@ -214,7 +215,7 @@ mod tests {
             0b01, 0b11, // C
             0b00, 0b11, // D
         ];
-        let out = downsize::<2>(2, &mut s).0;
+        let out = downsize_pow2::<2>(2, &mut s).0;
         // group0: x0 = 2+0 on, x1 = 1+1 on; group1: x0 = 1+0 off, x1 = 2+2 on
         assert_eq!(out, [0b10, 0b10, 0, 0b10, 0, 0, 0, 0]);
     }
@@ -224,21 +225,21 @@ mod tests {
     #[test]
     fn n4_exactly_threshold_on() {
         let mut s = [0xF, 0xF, 0, 0]; // 4 + 4 = 8
-        downsize::<4>(1, &mut s);
+        downsize_pow2::<4>(1, &mut s);
         assert_eq!(s[..1], [0x8]);
     }
 
     #[test]
     fn n4_one_below_threshold_off() {
         let mut s = [0xF, 0x7, 0, 0]; // 4 + 3 = 7
-        downsize::<4>(1, &mut s);
+        downsize_pow2::<4>(1, &mut s);
         assert_eq!(s[..1], [0x0]);
     }
 
     #[test]
     fn n4_full_block_saturates_but_on() {
         let mut s = [0xF; 4]; // 16 saturates to 15
-        downsize::<4>(1, &mut s);
+        downsize_pow2::<4>(1, &mut s);
         assert_eq!(s[..1], [0x8]);
     }
 
@@ -247,14 +248,14 @@ mod tests {
     #[test]
     fn n8_threshold_on() {
         let mut s = [0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0]; // 32
-        downsize::<8>(1, &mut s);
+        downsize_pow2::<8>(1, &mut s);
         assert_eq!(s[..1], [0x80]);
     }
 
     #[test]
     fn n8_below_threshold_off() {
         let mut s = [0xFF, 0xFF, 0xFF, 0x7F, 0, 0, 0, 0]; // 31
-        downsize::<8>(1, &mut s);
+        downsize_pow2::<8>(1, &mut s);
         assert_eq!(s[..1], [0]);
     }
 
@@ -262,18 +263,18 @@ mod tests {
     fn n8_lanes_independent() {
         // lane0 gets 32 (on), lane1 gets 31 (off)
         let mut s = [0xFFFF, 0xFFFF, 0xFFFF, 0x7FFF, 0, 0, 0, 0];
-        downsize::<8>(1, &mut s);
+        downsize_pow2::<8>(1, &mut s);
         assert_eq!(s[..1], [0x0080]);
     }
 
     #[test]
     fn n8_all_ones_all_zeros() {
         let mut ones = [u64::MAX; 8];
-        downsize::<8>(1, &mut ones);
+        downsize_pow2::<8>(1, &mut ones);
         assert_eq!(ones[..1], [0x8080_8080_8080_8080]);
 
         let mut zeros = [0u64; 8];
-        downsize::<8>(1, &mut zeros);
+        downsize_pow2::<8>(1, &mut zeros);
         assert_eq!(zeros[..1], [0]);
     }
 
@@ -283,13 +284,13 @@ mod tests {
     fn n64_half_on_and_one_less() {
         let mut s = [0u64; 64];
         s[..32].fill(u64::MAX); // 32 * 64 = 2048
-        downsize::<64>(1, &mut s);
+        downsize_pow2::<64>(1, &mut s);
         assert_eq!(s[0], 1 << 63);
 
         let mut t = [0u64; 64];
         t[..32].fill(u64::MAX);
         t[31] = u64::MAX >> 1; // 2047
-        downsize::<64>(1, &mut t);
+        downsize_pow2::<64>(1, &mut t);
         assert_eq!(t[0], 0);
     }
 
@@ -299,7 +300,7 @@ mod tests {
     fn ragged_n2_partial_on() {
         // 3 rows, w=1, N=2 -> 1 full group + 1 partial, padded to 4
         let mut s = [0b11, 0b00, 0b11, 0];
-        let out = downsize::<2>(1, &mut s).0;
+        let out = downsize_pow2::<2>(1, &mut s).0;
         assert_eq!(out, [0b10, 0b10, 0, 0]);
     }
 
@@ -307,7 +308,7 @@ mod tests {
     fn ragged_n2_partial_off() {
         // partial count 1 < 2 -> off
         let mut s = [0b11, 0b11, 0b01, 0];
-        let out = downsize::<2>(1, &mut s).0;
+        let out = downsize_pow2::<2>(1, &mut s).0;
         assert_eq!(out, [0b10, 0, 0, 0]);
     }
 
@@ -318,7 +319,7 @@ mod tests {
             0b11, 0b00, 0b00, 0b00, 0b11, 0b01, // rows 0-2
             0, 0, // padding
         ];
-        let out = downsize::<2>(2, &mut s).0;
+        let out = downsize_pow2::<2>(2, &mut s).0;
         // partial: x0 = 2 on, x1 = 1 off
         assert_eq!(out, [0b10, 0, 0b10, 0, 0, 0, 0, 0]);
     }
@@ -327,7 +328,7 @@ mod tests {
     fn ragged_n8_one_extra_row_off() {
         // 9 rows, w=1, N=8 -> 1 full group + 1 partial (count 8 < 32 off), padded to 4
         let mut s = [0xFF; 9];
-        let out = downsize::<8>(1, &mut s).0;
+        let out = downsize_pow2::<8>(1, &mut s).0;
         assert_eq!(out, [0x80, 0, 0, 0]);
     }
 
@@ -336,7 +337,7 @@ mod tests {
         // 12 rows, w=1, N=8 -> group0 zero, partial = 4*8 = 32 -> on, padded to 4
         let mut s = [0u64; 12];
         s[8..].fill(0xFF);
-        let out = downsize::<8>(1, &mut s).0;
+        let out = downsize_pow2::<8>(1, &mut s).0;
         assert_eq!(out, [0, 0x80, 0, 0]);
     }
 
@@ -346,7 +347,7 @@ mod tests {
     fn returned_len_is_padded_to_4w() {
         // 10 rows, w=3, N=4 -> ceil(10/4)=3 output rows -> 9 cells -> padded to 12
         let mut s = [0u64; 10 * 3];
-        assert_eq!(downsize::<4>(3, &mut s).0.len(), 12);
+        assert_eq!(downsize_pow2::<4>(3, &mut s).0.len(), 12);
     }
 
     // ---- Bad shapes ----
@@ -355,13 +356,13 @@ mod tests {
     #[should_panic]
     fn incomplete_line_panics() {
         let mut s = [0u64; 5]; // w = 2 -> not a multiple of w
-        downsize::<2>(2, &mut s);
+        downsize_pow2::<2>(2, &mut s);
     }
 
     #[test]
     #[should_panic]
     fn zero_width_panics() {
         let mut s = [0u64; 4];
-        downsize::<2>(0, &mut s);
+        downsize_pow2::<2>(0, &mut s);
     }
 }
