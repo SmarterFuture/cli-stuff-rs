@@ -117,7 +117,7 @@ unsafe fn downsize_3to2_nby3<const N: usize>(
         }
         2 => {
             let l42 = cmp_maj3(set[2], carry[2]) >> 20;
-            let o2 = col[1] << 22 | l42;
+            let o2 = (col[1] << 22) | l42;
             unchecked!(*dst_ptr[wx + 1] = o2);
         }
         3 => {
@@ -216,47 +216,62 @@ pub fn downsize_3to2(w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
     let band_rem = w % 3;
     let full = w / 3;
 
-    let all = bands + (rem == 2) as usize;
-
     let ow = 2 * full + band_rem;
 
     // they are aliased, but there should never be write before read so it should be fine
-    let dst_ptr = src.as_mut_ptr();
+    let mut dst_ptr = src.as_mut_ptr();
     let src_ptr = dst_ptr.cast_const();
+
+    let mut y = 0;
+    let mut row_ptrs: [_; 3] = unsafe { from_fn(|r| src_ptr.add(r * w)) };
 
     #[cfg(target_arch = "x86_64")]
     let avx2 = is_x86_feature_detected!("avx2");
 
-    for y in 0..all {
-        let band = y * w * 3;
-        let wx = y * ow;
-
-        let row_ptrs: [_; 3] = unsafe { from_fn(|r| src_ptr.add(band + r * w)) };
-
+    // ahh yes... lets write assembly without doing so...
+    loop {
         for i in 0..full {
             if avx2 {
-                unsafe { downsize_3to2_3by3_avx2(&row_ptrs, 3 * i, dst_ptr, wx + 2 * i) };
+                unsafe { downsize_3to2_3by3_avx2(&row_ptrs, 3 * i, dst_ptr, 2 * i) };
             } else {
-                unsafe { downsize_3to2_nby3::<3>(&row_ptrs, 3 * i, dst_ptr, wx + 2 * i) };
+                unsafe { downsize_3to2_nby3::<3>(&row_ptrs, 3 * i, dst_ptr, 2 * i) };
             }
         }
 
-        let wx = wx + 2 * full;
         match band_rem {
             1 => unsafe {
-                downsize_3to2_nby3::<1>(&row_ptrs, 3 * full, dst_ptr, wx);
+                downsize_3to2_nby3::<1>(&row_ptrs, 3 * full, dst_ptr, 2 * full);
             },
             2 => unsafe {
-                downsize_3to2_nby3::<2>(&row_ptrs, 3 * full, dst_ptr, wx);
+                downsize_3to2_nby3::<2>(&row_ptrs, 3 * full, dst_ptr, 2 * full);
             },
             _ => {}
         }
+
+        // FUTURE: y is spilled so maybe restructure to compare pointers
+        y += 1;
+        unsafe { dst_ptr = dst_ptr.add(ow) };
+        if y < bands {
+            for ptr in &mut row_ptrs {
+                *ptr = unsafe { ptr.add(3 * w) };
+            }
+            continue;
+        }
+
+        if y == bands && rem == 2 {
+            unsafe {
+                let zeros = row_ptrs[2];
+                zeros.cast_mut().write_bytes(0, w);
+                row_ptrs = [zeros.add(w), zeros.add(w * 2), zeros]
+            }
+            continue;
+        }
+
+        break;
     }
 
-    // FIXME: we are missing like the last incomplete band...
-
     if rem == 1 {
-        unsafe { dst_ptr.add(ow * bands).write_bytes(0, ow) };
+        unsafe { dst_ptr.write_bytes(0, ow) };
     }
 
     unsafe { src.split_at_mut_unchecked(ow * rows.div_ceil(3)) }

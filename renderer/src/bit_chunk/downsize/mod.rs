@@ -1,9 +1,9 @@
 use std::hint::unreachable_unchecked;
 
-use crate::bit_chunk::downsize::{downsize_generic::downsize_3to2, downsize_pow2::downsize_pow2};
+use crate::bit_chunk::downsize::{downsize_3to2::downsize_3to2, downsize_pow2::downsize_pow2};
 
 // FIXME: remove this pub, for asm only
-pub mod downsize_generic;
+pub mod downsize_3to2;
 mod downsize_pow2;
 
 pub fn downsize(n: usize, w: usize, src: &mut [u64]) -> (&mut [u64], &mut [u64]) {
